@@ -21,10 +21,10 @@ class Rank(IntEnum):
     Ace = 12
 
 class Suit(IntEnum):
-    Spades = 0
-    Hearts = 1
-    Diamonds = 2
-    Clubs = 3
+    Clubs = 0
+    Diamonds = 1
+    Hearts = 2
+    Spades = 3
 
 MAP_RANKS = {'2' : Rank.Duece,
              '3' : Rank.Trey,
@@ -73,18 +73,48 @@ class HandType(Enum):
     AXo = 5
     AXs = 6
     XX = 7
-    AhKh = 8
+    AhKh = 9
+
+    def santize_hand(hand):
+        """ function that does minimal validation and sanitizes a hand 
+            
+            KA => AK, AhAs => AsAh
+        """
+        if hand[0].lower() == 'x':
+            if len(hand) == 2 and hand[1].lower() == 'x':
+                return hand
+            raise InvalidHandTypeError(hand)
+
+        if hand[1].lower() == 'x':
+            return hand
+
+        if len(hand) == 2:
+            return hand[1]+hand[0] \
+                if MAP_RANKS[hand[1]] > MAP_RANKS[hand[0]] \
+                else hand
+
+        if len(hand) == 3:
+            return hand[1]+hand[0]+hand[2] \
+                if hand[1] != 'x' or MAP_RANKS[hand[1]] > MAP_RANKS[hand[0]] \
+                else hand
+
+        if hand[2].lower() == 'x':
+            return hand
+
+        if(len(hand) != 4):
+            raise AssertionError(
+                "len(hand) == {0}. Expected 4".format(len(hand)))
+        
+        if hand[2] == hand[0]:
+            return hand[2]+hand[3]+hand[0]+hand[1] \
+            if MAP_SUITS[hand[3]] > MAP_SUITS[hand[1]] \
+            else hand
+
+        return hand[2]+hand[3]+hand[0]+hand[1] \
+            if MAP_RANKS[hand[2]] > MAP_RANKS[hand[0]] \
+            else hand
 
     def parse_hand_type(hand):
-        # regex parsing can generate some invalid combos
-        # reject them first XA[so]?
-        if hand[0].lower() == 'x' \
-            and (len(hand) != 2 or hand[1].lower() != 'x'):
-            raise InvalidHandTypeError(hand)
-        if len(hand) == 4 \
-            and hand[1].lower() not in STR_SUITS \
-            and hand[3].lower() not in STR_SUITS:
-            raise InvalidHandTypeError(hand)
         if len(hand) == 2: 
             if hand[0].lower() == 'x':
                     return HandType.XX 
@@ -102,7 +132,7 @@ class HandType(Enum):
                     if hand[1].lower() == 'x' \
                     else HandType.AKs
         if len(hand) == 4:
-            return HandType.AhKh
+                return HandType.AhKh
         ### Unreachable
         raise AssertionError(hand)
 
@@ -110,11 +140,24 @@ class Hand:
     """Hand represents a hand of type HandType
     """
 
-    def __init__(self, hand):
-        self.hand = hand
-        self.hand_type = HandType.parse_hand_type(self.hand)
-        self.combos = self._gen_combos()
+    @property
+    def hand(self):
+        return self._hand
 
+    @property
+    def hand_type(self):
+        return self._hand_type
+
+    @property
+    def combos(self):
+        if self._combos is None:
+            self._combos = self._gen_combos()
+        return self._combos
+
+    def __init__(self, hand):
+        self._hand = HandType.santize_hand(hand)
+        self._hand_type = HandType.parse_hand_type(self.hand)
+        self._combos = None
 
     def _gen_combos(self):
         if self.hand_type == HandType.AA:
@@ -148,11 +191,15 @@ class Hand:
                 [a for a in STR_RANKS if a.lower() != self.hand[0].lower()]
             return [self.hand[0]+b+a+b for a in allXhands for b in STR_SUITS]
         if self.hand_type == HandType.XX:
-            suits = [a+b for (a,b) in itertools.product(STR_SUITS, repeat=2)]
-            ranks = [a+b for (a,b) in itertools.product(STR_RANKS, repeat=2)]
-            return [a[0]+b[0]+a[1]+b[1] for a in ranks for b in suits]
-        if self.hand_type == HandType.AhKh:
-            return [self.hand]
+            suits_for_nonpairs = \
+                [a+b for (a,b) in itertools.product(STR_SUITS, repeat=2)]
+            nonpairs = [a+b for (a,b) in itertools.combinations(STR_RANKS,2)]
+            suits_for_pairs = \
+                [a+b for (a,b) in itertools.combinations(STR_SUITS, 2)]
+            return [a[0]+b[0]+a[1]+b[1] 
+                        for a in nonpairs for b in suits_for_nonpairs]\
+                   + [a+b[0]+a+b[1]
+                        for a in STR_RANKS for b in suits_for_pairs]
         raise AssertionError("Unsupported HandType")
 
 class TestHands(unittest.TestCase):
@@ -166,7 +213,7 @@ class TestHands(unittest.TestCase):
     def driver(self, hand_str, expected_hand_type, expected_combos):
         h = Hand(hand_str)
         self.assertEqual(h.hand_type, expected_hand_type)
-        print("comparing {0} to {1}".format(h.combos, expected_combos))
+        #print("comparing {0} to {1}".format(h.combos, expected_combos))
         self.assertCountEqual(list(map(self._sort_combo_elem, h.combos)), \
                               list(map(self._sort_combo_elem, expected_combos)))
 
@@ -233,8 +280,14 @@ class TestHands(unittest.TestCase):
         self.driver("Kxs", HandType.AXs, expected_result)
 
     def test_XX(self):
-        #TODO
-        pass
+        h = Hand("XX")
+        self.assertEqual(len(h.combos), 1326)
+
+    def test_sanitzation(self):
+        self.assertEqual(Hand("KAo").hand, "AKo")
+        self.assertEqual(Hand("JQs").hand, "QJs")
+        self.assertEqual(Hand("KhAh").hand, "AhKh")
+        self.assertEqual(Hand("AcAd").hand, "AdAc")
 
 if __name__ == "__main__":
     unittest.main()
